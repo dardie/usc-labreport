@@ -17,6 +17,11 @@ if (([Environment]::UserInteractive) -and (!$BeQuiet)) {
 $SiteServer = "wsp-configmgr01"
 
 $cachedir="$($env:localappdata)\labreport"
+$reportdir="c:\scratch\drees\git\dardie\usc-labreport\html"
+
+if (-not (Test-Path $reportdir)) {
+    write-error "Report dir ""$reportdir"" does not exist, please fix."
+}
 
 if (-not (Test-Path $cachedir)) { New-Item -Path $cachedir -ItemType directory }
 $labscache = "$cachedir\labs.csv"
@@ -312,8 +317,8 @@ Function Get-LabReport ($substr) {
             $Out = $Out + $GroupedReport.$Lab
         }
     } else {
-        #$Out = Import-CSV $LabReportCache
-        $Out = Import-CSV [LabInfo[]]$LabReportCache
+        $Out = Import-CSV $LabReportCache
+        #$Out = Import-CSV [LabInfo[]]$LabReportCache
     }
 
     # Yucky yuck yuck hackedy hack
@@ -338,6 +343,30 @@ Function Get-LabReport ($substr) {
 Export-ModuleMember -function Get-LabReport
 Set-Alias Report Get-LabReport
 Export-ModuleMember -alias Report
+
+Function Publish-LabReport {
+    $Labs = Import-CSV $LabsCache
+    $Report = (Import-CSV $LabReportCache)
+    $Report = foreach ($pc in $Report) {
+        $pc.lastboot = get-date $pc.lastboot
+        $pc.lastlogon = get-date $pc.lastlogon
+        $pc.lastactivedate = get-date $pc.lastactivedate
+        $pc.lastpolicyrequest = get-date $pc.lastpolicyrequest
+        $pc.installdate = get-date $pc.installdate
+        [LabInfo]$pc
+    }
+    $GroupedReport = $Report | group collection -ashashtable -asstring
+
+    remove-item $reportdir\*.*
+
+    summary | convertto-xml -as string > $reportdir\summary.xml
+
+    foreach ($Lab in $Labs.CollectionName) {
+    write-host $Lab
+        $GroupedReport.$Lab | convertto-xml -as string > $reportdir\$Lab.xml
+    }
+}
+Export-ModuleMember -function Publish-LabReport
 
 # Main
 

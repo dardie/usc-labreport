@@ -3,31 +3,33 @@ param(
 )
 
 if (([Environment]::UserInteractive) -and (!$BeQuiet)) {
-    write-host "******************************************************************************"
+    write-host "***********************************************************************************"
     write-host " Type 'help COMMAND' for detailed info on each command."
     write-host " Commands:"
     write-host " "
     write-host " Summary            Summary of all labs"
     write-host " Report LAB         Lab report for labs matching LAB"
-    write-host " Update-Labs        Update list of labs from SCCM (automatic every 14 days)"
-    write-host " Update-LabReport   Update lab info (automatic every day when module reloaded"
-    write-host "******************************************************************************"
+    write-host " Update-Labs        Force update list of labs from SCCM (automatic every 14 days)"
+    write-host " Update-LabReport   Force update lab info (automatic every day when module reloaded"
+    write-host " Update             Update list of labs and lab info if required"
+    write-host " Publish-Labreport  Make HTML report"
+    write-host "***********************************************************************************"
 }
 
 $SiteServer = "wsp-configmgr01"
-
-$cachedir="$($env:localappdata)\labreport"
 $reportdir="c:\scratch\drees\git\dardie\usc-labreport\html"
 
 if (-not (Test-Path $reportdir)) {
     write-error "Report dir ""$reportdir"" does not exist, please fix."
 }
 
-if (-not (Test-Path $cachedir)) { New-Item -Path $cachedir -ItemType directory }
-$labscache = "$cachedir\labs.csv"
-$LabReportCache = "$cachedir\report.csv"
+$cachedir="$($env:localappdata)\labreport"
 
-class LabInfo {
+if (-not (Test-Path $cachedir)) { New-Item -Path $cachedir -ItemType directory }
+$labscache = "$cachedir\labs.xml"
+$LabReportCache = "$cachedir\report.xml"
+
+class PCInfo {
     [String]$Collection
     [String]$ComputerName
     [String]$OU
@@ -48,6 +50,13 @@ class LabInfo {
     [Object[]]$IPSubnets
     [Object[]]$IPAddresses
     [Object[]]$ADGroups
+}
+
+class LabSummary {
+    [String]$Collection
+    [Uint32]$Down7Days
+    [UInt32]$TotalPCs
+    [UInt32]$Win7
 }
 function show-module ($modname) {
 	<#
@@ -84,7 +93,6 @@ function show-module ($modname) {
 	get-module $modname -listavailable | % { ($_.exportedcommands.values.Name) } | % { get-help $_ | select name, synopsis }
 }
 Export-ModuleMember -function Show-Module
-
 Set-Alias labreports 'show-module lab-reports'
 Export-ModuleMember -alias labreports
 
@@ -107,7 +115,7 @@ Function Update-CachedDataIfNecessary () {
 
     $LabsCacheRefreshPeriod = 14
     if (-not (Test-Path $labscache)) {
-        Write-Warning "Reading list of Managed Labs collections from SCCM, please be patient"
+        Write-Warning "Pulling list of Managed Labs collections from SCCM, please be patient"
         $Labs = Update-Labs
     } elseif (Test-FileOlder $labscache $LabsCacheRefreshPeriod) {
         $Msg = "Managed Labs collections have not been updated from SCCM in over $LabsCacheRefreshPeriod days. Update? [y/n]"
@@ -115,14 +123,12 @@ Function Update-CachedDataIfNecessary () {
         $ForceUpdateLabsCache = ($Confirm -eq "y")
         Update-Labs
     }
-    $labs = Import-csv "$labscache"
 
     # "Update lab info report from SCCM automatically once / day"
     $LabsReportCacheRefreshPeriod = 1
     if ((-not (Test-Path $LabReportCache)) -or (Test-FileOlder $LabReportCache $LabsReportCacheRefreshPeriod)) {
         Update-LabReport
     }
-    Import-CSV "$LabReportCache"
 }
 Export-ModuleMember -function Update-CachedDataIfNecessary
 Set-Alias Update Update-CachedDataIfNecessary
@@ -130,9 +136,8 @@ Export-ModuleMember -alias Update
 
 Function Update-Labs {
     Write-Verbose "Getting list of all Managed Labs from SCCM"
-    $Labs = Get-cfgcollectionsByFolder "Managed Labs"; $labs |
-        where {$_.collectionname -notlike "_*" -and $_.collectionname -notlike "All Managed Labs"} |
-        Export-CSV "$labscache"
+    $Labs = Get-cfgcollectionsByFolder "Managed Labs"
+    $Labs | where {$_.collectionname -notlike "_*" -and $_.collectionname -notlike "All Managed Labs"} | Export-CliXML $labscache
 }
 Export-ModuleMember -function Update-Labs
 
@@ -141,12 +146,13 @@ Function Update-LabReport {
         [parameter(Mandatory=$false)][String]$LabSearchString
     )
 
+    $Labs = Import-CliXML $LabsCache
+
     if ($LabSearchString) {
-        $Labs = Import-CSV $LabsCache
         $LabsToUpdate = $Labs.CollectionName | ? { $_ -like "*$($LabSearchString)*"}
-        $Report = Import-CSV $LabReportCache | where { $LabsToUpdate -notcontains $_.Collection }
+        $Report = Import-CliXML $LabReportCache | where { $LabsToUpdate -notcontains $_.Collection }
     } else {
-        $Report = @{}
+        $Report = @()
         $LabsToUpdate = $Labs.CollectionName
     }
 
@@ -156,8 +162,7 @@ Function Update-LabReport {
         Get-LabInfo $LabName
     }
     $Report = $Report + $ReportUpdate
-    $Report | Export-CSV "$LabReportCache"
-
+    $Report | Export-CliXML $LabReportCache
 }
 Export-ModuleMember -function Update-LabReport
 
@@ -197,13 +202,13 @@ function Audit-deployments () {
         $labresult = $LabMembers |
             get-pcinfo -properties OSBuild, InstallDate, LastActiveDate, LastBoot, WarrantyEndDate, Model |
             add-member Collection $Lab.CollectionName -passthru
-        $labresult | export-csv -NoTypeInformation -path "$($lab.CollectionName).csv"
+        $labresult | export-csv -path "$($lab.CollectionName).csv"
         $allresults = $allresults + $labresult
         # end result
     }
 }
 Function Convert-ToDate($MgmtDateTime) {
-    $a=[management.managementDateTimeConverter]::ToDateTime($MgmtDateTime)
+    [management.managementDateTimeConverter]::ToDateTime($MgmtDateTime)
 }
 Function Extract-OU($DistinguishedName, [Switch]$Short) {
     if ($Short) {
@@ -271,12 +276,13 @@ Function Get-LabInfo ($Collection) {
     $PSStandardMembers = [System.Management.Automation.PSMemberInfo[]]@($defaultDisplayPropertySet)
     $NiceResult | Add-Member MemberSet PSStandardMembers $PSStandardMembers
 
-    Return $NiceResult
+    Return [PCInfo[]]$NiceResult
 }
+Export-ModuleMember -function Get-LabInfo
 
 Function Get-LabSummary {
-    $Labs = Import-CSV $LabsCache
-    $GroupedReport = Import-CSV $LabReportCache | group collection -ashashtable -asstring
+    $Labs = Import-CliXML $LabsCache
+    $GroupedReport = Import-CliXML $LabReportCache | group collection -ashashtable -asstring
 
     $Summary = foreach ($LabName in $Labs.CollectionName) {
         $LabReport = $GroupedReport.$Labname
@@ -287,25 +293,24 @@ Function Get-LabSummary {
                 (new-timespan -start ($_.LastActiveDate) -end (get-date)) -gt (new-timespan -days 7) 
             }
         ).ComputerName.Count
-        [PSCustomObject]@{
+        [LabSummary]@{
             Collection = $LabName
             Down7Days = $Down7Days
             Win7 = $Win7Count
             TotalPCs = $TotalPCs
         }
     }
-    $Summary  | sort -property Down7Days
+    $Summary  | sort -property Win7
 }
 Export-ModuleMember -function Get-LabSummary
 Set-Alias Summary Get-LabSummary
 Export-ModuleMember -alias Summary
+
 Function Get-LabReport ($substr) {
-    $Labs = Import-CSV $LabsCache
+    $Labs = Import-CliXML $LabsCache
 
     if ($substr) {
-        #$GroupedReport = ([LabInfo[]](Import-CSV $LabReportCache)) | group collection -ashashtable -asstring
-        $GroupedReport = (Import-CSV $LabReportCache) | group collection -ashashtable -asstring
-
+        $GroupedReport = Import-CliXML $LabReportCache | group collection -ashashtable -asstring
 
         $CurrentLabs = $Labs.CollectionName | ? { $_ -like "*$($substr)*"}
         if ($CurrentLabs.Count -eq 0) {
@@ -317,53 +322,37 @@ Function Get-LabReport ($substr) {
             $Out = $Out + $GroupedReport.$Lab
         }
     } else {
-        $Out = Import-CSV $LabReportCache
-        #$Out = Import-CSV [LabInfo[]]$LabReportCache
-    }
-
-    # Yucky yuck yuck hackedy hack
-    # [DateTime] conversion from the stored localised date string fails, only US date formats work
-    # Need [DateTime] fields to be able to convert $Out to [LabInfo]
-    # Need $Out to be type [LabInfo] so that it looks pretty when output to XML
-    $Out = foreach ($pc in $Out) {
-        $pc.lastboot = get-date $pc.lastboot
-        $pc.lastlogon = get-date $pc.lastlogon
-        $pc.lastactivedate = get-date $pc.lastactivedate
-        $pc.lastpolicyrequest = get-date $pc.lastpolicyrequest
-        $pc.installdate = get-date $pc.installdate
-        [LabInfo]$pc
+        #$Out = Import-XML $LabReportCache
+        $Out = Import-CliXML $LabReportCache
     }
 
     $DefaultProperties = @("ComputerName","OU","OSBuild","InstallDate","LastBoot","LastActiveDate","Model","Collection")
     $defaultDisplayPropertySet = New-Object System.Management.Automation.PSPropertySet('DefaultDisplayPropertySet',[string[]]$defaultProperties)
     $PSStandardMembers = [System.Management.Automation.PSMemberInfo[]]@($defaultDisplayPropertySet)
-    #$Out | Add-Member MemberSet PSStandardMembers $PSStandardMembers -passthru
-    $Out
+    $Out | Add-Member MemberSet PSStandardMembers $PSStandardMembers -passthru
 }
 Export-ModuleMember -function Get-LabReport
 Set-Alias Report Get-LabReport
 Export-ModuleMember -alias Report
 
 Function Publish-LabReport {
-    $Labs = Import-CSV $LabsCache
-    $Report = (Import-CSV $LabReportCache)
-    $Report = foreach ($pc in $Report) {
-        $pc.lastboot = get-date $pc.lastboot
-        $pc.lastlogon = get-date $pc.lastlogon
-        $pc.lastactivedate = get-date $pc.lastactivedate
-        $pc.lastpolicyrequest = get-date $pc.lastpolicyrequest
-        $pc.installdate = get-date $pc.installdate
-        [LabInfo]$pc
-    }
+    $Labs = Import-CliXML $LabsCache
+    $Report = Import-CliXML $LabReportCache
+#    foreach ($pc in $Report) {
+#        $pc.lastboot = (get-date -format "dd/MM/yy" $pc.lastboot)
+#        $pc.lastlogon =  (get-date -format "dd/MM/yy" $pc.lastlogon)
+#        $pc.lastactivedate = (get-date -format "dd/MM/yy" $pc.lastactivedate)
+#        $pc.lastpolicyrequest = (get-date -format "dd/MM/yy" $pc.lastpolicyrequest)
+#        $pc.installdate = (get-date -format "dd/MM/yy" $pc.installdate)
+#    }
     $GroupedReport = $Report | group collection -ashashtable -asstring
 
     remove-item $reportdir\*.*
 
-    summary | convertto-xml -as string > $reportdir\summary.xml
+    summary | convertto-html > $reportdir\summary.html
 
     foreach ($Lab in $Labs.CollectionName) {
-    write-host $Lab
-        $GroupedReport.$Lab | convertto-xml -as string > $reportdir\$Lab.xml
+        $GroupedReport.$Lab | convertto-html > $reportdir\$Lab.html
     }
 }
 Export-ModuleMember -function Publish-LabReport

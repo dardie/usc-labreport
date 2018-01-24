@@ -1,0 +1,73 @@
+﻿body {
+    font-family: Sans-Serif;
+    background-image: url("../img/silver-2143730_1920.jpg");
+    background-attachment: fixed;
+}
+
+html, body {
+    width: 100%;
+}
+
+h1 {
+    text-align: center;
+    color: #331111;
+    font-family: 'Trebuchet MS', 'Lucida Sans Unicode', 'Lucida Grande', 'Lucida Sans', Arial, sans-serif
+    opacity: 0.5;
+}
+
+table {
+    margin: 0 auto;
+    opacity: 0.6;
+    border-collapse: collapse;
+}
+
+tbody tr:nth-child(even) {
+    background-color: #FFFFFF;
+}
+
+tbody tr:nth-child(odd) {
+    background-color: #EAF0F0;
+}
+
+tbody tr:hover {
+    background-color: #99BBBB;
+    color: white;
+    transition: all 200ms ease-in-out;
+}
+
+tbody tr:nth-child(odd):hover {
+    background-color: #99BBBB;
+    color: white;
+    transition: all 200ms ease-in-out;
+}
+
+tbody tr:hover td:first-child! {
+    border-top-left-radius: 5px;
+    border-bottom-left-radius: 5px;
+}
+
+tbody tr:hover td:last-child! {
+    border-top-right-radius: 5px;
+    border-bottom-right-radius: 5px;
+}
+
+td {
+    padding: .75em;
+}
+
+th { font-size: larger;
+    background-color: #C8B4B4;
+    color: darkslategrey;
+    font-weight: bolder;
+    font-family: 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif;
+    text-align: left;
+    padding: 1em;
+}
+
+th:first-child {
+    border-top-left-radius: 10px;
+}
+
+th:last-child {
+    border-top-right-radius: 10px;
+}

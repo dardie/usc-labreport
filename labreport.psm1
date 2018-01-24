@@ -17,17 +17,21 @@ if (([Environment]::UserInteractive) -and (!$BeQuiet)) {
 }
 
 $SiteServer = "wsp-configmgr01"
-$reportdir="c:\scratch\drees\git\dardie\usc-labreport\html"
-
-if (-not (Test-Path $reportdir)) {
-    write-error "Report dir ""$reportdir"" does not exist, please fix."
-}
 
 $cachedir="$($env:localappdata)\labreport"
+$cachedir="\\generalvs\general\ITServices\Department\Records\Accreditation\current-semester-prep\labreport"
 
 if (-not (Test-Path $cachedir)) { New-Item -Path $cachedir -ItemType directory }
 $labscache = "$cachedir\labs.xml"
 $LabReportCache = "$cachedir\report.xml"
+
+#$reportdir="c:\scratch\drees\git\dardie\usc-labreport\html"
+$reportdir="$cachedir\html"
+
+if (-not (Test-Path $reportdir)) {
+    New-Item -Path $reportdir -ItemType directory
+    #write-error "Report dir ""$reportdir"" does not exist, please fix."
+}
 
 class PCInfo {
     [String]$Collection
@@ -337,25 +341,77 @@ Export-ModuleMember -alias Report
 
 Function Publish-LabReport {
     $Labs = Import-CliXML $LabsCache
-    $Report = Import-CliXML $LabReportCache
-#    foreach ($pc in $Report) {
-#        $pc.lastboot = (get-date -format "dd/MM/yy" $pc.lastboot)
-#        $pc.lastlogon =  (get-date -format "dd/MM/yy" $pc.lastlogon)
-#        $pc.lastactivedate = (get-date -format "dd/MM/yy" $pc.lastactivedate)
-#        $pc.lastpolicyrequest = (get-date -format "dd/MM/yy" $pc.lastpolicyrequest)
-#        $pc.installdate = (get-date -format "dd/MM/yy" $pc.installdate)
-#    }
+    $Report = Import-CliXML $LabReportCache |
+        select @{Name="PC";Expression={$_.ComputerName}},
+            OU,
+            @{Name="Install Date";Expression={ "{0:dd/MM/yy}" -f $_.InstallDate }},
+            OSBuild,
+            @{Name="Last Boot";Expression={ "{0:dd/MM/yy}" -f $_.LastBoot }},
+            @{Name="Last Logon";Expression={ "{0:dd/MM/yy}" -f $_.LastLogon }},
+            @{Name="Last Policy";Expression={ "{0:dd/MM/yy}" -f $_.LastPolicyRequest }},
+            @{Name="Last Active";Expression={ "{0:dd/MM/yy}" -f $_.LastActiveDate }},
+            MacAddresses,
+            Model,
+            Collection
     $GroupedReport = $Report | group collection -ashashtable -asstring
 
     remove-item $reportdir\*.*
 
-    summary | convertto-html > $reportdir\summary.html
+    $OutputPath = "$($reportdir)\\summary.html"
+    summary | convertto-html > $OutputPath
+    Add-HTMLHeaderExtras $OutputPath "USC Labs: Summary View"
 
     foreach ($Lab in $Labs.CollectionName) {
-        $GroupedReport.$Lab | convertto-html > $reportdir\$Lab.html
+        $OutputPath = "$($reportdir)\\$($Lab).html"
+        $GroupedReport.$Lab | select -exclude Collection | convertto-html > $OutputPath
+        Add-HTMLHeaderExtras $OutputPath $Lab
     }
 }
 Export-ModuleMember -function Publish-LabReport
+
+Function Add-HTMLHeaderExtras2 ($filename) {
+    $ID = ...
+
+    [xml]$plist = get-content $filename
+    $node = $plist.SelectSingleNode("//array/string[text()='ABCD']")
+
+    $newNode = $plist.CreateElement('string')
+    $newNode.AppendChild($plist.CreateTextNode($ID)) >$null
+
+$node.ParentNode.InsertAfter($newNode, $node)
+}
+
+Function Add-HTMLHeaderExtras ($filename, $Heading) {
+    $headbit = @"
+
+    <link rel="stylesheet" type="text/css" href="../css/labreport.css">
+    <link rel="stylesheet" type="text/css" href="../css/tablesort.css">
+    <script src='../js/tablesort/tablesort.js' type="text/javascript"></script>
+    <script src='../js/tablesort/sorts/tablesort.number.js' type="text/javascript"></script>
+    <script src='../js/tablesort/sorts/tablesort.date.js' type="text/javascript"></script>
+    <script src='../js/labreport.js' type="text/javascript"></script>
+"@
+    $Heading = if ($Heading) {
+        "<h1>$Heading</h1>`n"
+    } else {
+        ""
+    }
+    $aftertablebit = @"
+    <script>
+        init_rowevents();
+        new Tablesort(document.getElementById('labreport'));
+    </script>
+"@
+    (Get-Content $filename).
+        replace('<head>','<head>'+$headbit).
+        replace('<body>','<body>'+$Heading).
+        replace('</table>','</table>'+$aftertablebit).
+        replace('<table>','<table id="labreport">').
+        replace('<tr><th>',"<thead>`n<tr><th>").
+        replace('</th></tr>',"</th></tr>`n</thead>") |
+        Set-Content $filename
+    .\html\summary.html
+}
 
 # Main
 
